@@ -30,6 +30,8 @@ here is magic; each one is a script or a hook you can read.
 | **Gardener** | nightly vault upkeep (orphans, links, summaries) → `garden:` commits | cron **daily 03:00** | `scripts/garden-run.sh` |
 | **Wanderer** | task-less serendipity walk — collides *trusted* vault notes | cron **Sun 07:00** | `scripts/wander-run.sh` |
 | **Magpie** | GitHub-stars watch — collides *untrusted* external text | cron **Sat 06:00** | `scripts/magpie-run.sh` |
+| **Bluejay** | serendipity news-reader — allowlisted RSS, **summaries only** (never article bodies), hunts the distant connection | cron **weekly** | `scripts/bluejay-run.sh` |
+| **Jackdaw** | people-radar — contributors of starred repos sorted into 4 typed lanes; **drafts only, sending is always a human act** | cron **monthly** | `scripts/jackdaw-run.sh` |
 | **WIP sweep** | snapshot dirty human tree → `wip/<host>` (never lose work) | cron **every 20 min** | `~/.local/bin/exo-wip-sweep.sh` |
 | **Recall hook** | search the vault on the first prompt of a CC session | UserPromptSubmit | `~/.claude/hooks/exo-recall.sh` |
 | **Session-start hook** | fetch/warn/pull this tree, nag about `wip/*` | SessionStart (in this repo) | `~/.claude/hooks/exo-session-start.sh` |
@@ -37,9 +39,14 @@ here is magic; each one is a script or a hook you can read.
 
 **The one rule that ties it together — trust boundaries by destination:**
 gardener and wanderer read already-trusted notes and write to `vault/` and push to
-`main`. Magpie ingests attacker-influenceable text (stranger-written repo
-descriptions), so it writes **only** to `quarantine/` (never indexed, never
-auto-linked) and you promote finds by hand. The WIP sweep writes unfinished human
+`main`. The three corvids — Magpie, Bluejay, Jackdaw — ingest attacker-influenceable
+text (stranger-written repo descriptions, RSS summaries, contributor profiles), so
+they write **only** to `quarantine/` (never indexed, never auto-linked) and you
+promote finds by hand. Their collide/classify phase holds the untrusted text in
+context with **no Bash, no git, no network, no MCP** — read the vault, write one
+quarantine file, nothing else — and the wrapper discards any change outside that
+path. "Nothing sparked" is a successful run; the birds never manufacture a find to
+look productive. The WIP sweep writes unfinished human
 work to `wip/<host>` branches — recoverable, but it reaches `main` only by your
 hand. Robot checkouts (`exocortex-{garden,wander,magpie}`) hard-reset every run, so
 they self-heal and never strand work.
