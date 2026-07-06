@@ -1,0 +1,23 @@
+{
+  "_design": "Nightly gardener. TRIGGER is a node-side cron entry (03:00) running scripts/garden-run.sh — NOT n8n, because Cilium blocks the n8n pod from reaching the node over SSH (pod->host). The script does: reset a dedicated checkout, exo index, exo garden, claude -p (apply edits, no API key), exo index, commit, push, then POST a run summary to this n8n webhook. This workflow is the RECEIVER, for visibility/history in n8n. Live workflow id: C2El9oMIVyYDbZsr.",
+  "_cron": "0 3 * * *  GARDEN_N8N_WEBHOOK='http://n8n.example.internal/webhook/exocortex-garden' /home/you/git/exocortex/scripts/garden-run.sh",
+  "name": "exocortex · gardener report",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Gardener report",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [280, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "exocortex-garden",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "notes": "Receives {status, day, detail, commit} from garden-run.sh at end of each nightly run. status ∈ pushed|clean|nochanges|failed. Extend here to forward to Telegram/email if desired."
+    }
+  ],
+  "connections": {},
+  "settings": { "timezone": "Europe/Budapest", "executionOrder": "v1", "saveDataSuccessExecution": "all" }
+}

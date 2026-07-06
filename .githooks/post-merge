@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# Drift also arrives via pull — reconcile after merges too.
+exec "$(dirname "$0")/reconcile"

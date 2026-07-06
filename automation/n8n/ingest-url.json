@@ -1,0 +1,19 @@
+{
+  "name": "exocortex · ingest URL",
+  "nodes": [
+    { "parameters": { "httpMethod": "POST", "path": "exo-ingest" },
+      "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 1,
+      "position": [240, 300] },
+    { "parameters": { "url": "={{ $json.body.url }}", "options": {} },
+      "name": "Fetch Page", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4,
+      "position": [460, 300] },
+    { "parameters": { "command": "cd /opt/exocortex && EXO_VAULT=/data/vault uv run exo index" },
+      "name": "Reindex", "type": "n8n-nodes-base.executeCommand", "typeVersion": 1,
+      "position": [900, 300] }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Fetch Page", "type": "main", "index": 0 }]] },
+    "Fetch Page": { "main": [[{ "node": "Reindex", "type": "main", "index": 0 }]] }
+  },
+  "_comment": "Between Fetch and Reindex: add a Function node to readability-extract and write 20-sources/<slug>.md from source.md template, or hand the text to Basic Memory MCP."
+}

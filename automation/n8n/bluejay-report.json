@@ -1,0 +1,25 @@
+{
+  "name": "exocortex · bluejay report",
+  "_comment": "scripts/bluejay-run.sh (weekly serendipity news-reader: allowlisted RSS summaries -> claude -p collide, quarantine-only blast radius) POSTs its run summary here. Payload: {status: nothing|finds|violation|failed, day, items, finds, detail, commit}. 'nothing' is a SUCCESSFUL run — the wrapper reports every run so the agent never needs a find to have a deliverable (see vault/30-projects/internet-wanderer.md, Forging 2). This workflow is the RECEIVER, for visibility/history in n8n. Sibling of exocortex-magpie. Import + activate, then the webhook path below is live.",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Bluejay report",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [280, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "exocortex-bluejay",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Budapest",
+    "saveDataSuccessExecution": "all"
+  }
+}

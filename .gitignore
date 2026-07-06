@@ -1,0 +1,10 @@
+# Derived index is rebuildable — don't version it
+index/*.db
+index/*.db-*
+index/graph.json
+__pycache__/
+*.pyc
+.venv/
+.env
+.obsidian/workspace*
+.obsidian/cache

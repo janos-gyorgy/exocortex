@@ -1,0 +1,80 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>exocortex · 3D</title>
+<style>
+  :root { --bg:#0b0d12; --fg:#cdd6f4; --muted:#6c7086; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; overflow:hidden; }
+  #graph { position:fixed; inset:0; }
+  #hud { position:fixed; top:12px; left:12px; z-index:10; max-width:320px;
+    background:rgba(17,19,26,.85); border:1px solid #1f2430; border-radius:10px;
+    padding:12px 14px; backdrop-filter:blur(6px); }
+  #hud h1 { font-size:13px; margin:0 0 6px; letter-spacing:.04em; }
+  #hud p { margin:2px 0; color:var(--muted); }
+  #search { width:100%; margin-top:8px; background:#0b0d12; color:var(--fg);
+    border:1px solid #1f2430; border-radius:6px; padding:6px 8px; outline:none; }
+  #sel { margin-top:8px; color:var(--fg); }
+  a { color:#89b4fa; }
+</style>
+<div id="hud">
+  <h1>exocortex · 3D brain</h1>
+  <p id="stats">loading index/graph.json…</p>
+  <input id="search" placeholder="filter nodes…" />
+  <div id="sel"></div>
+</div>
+<div id="graph"></div>
+
+<!-- 3d-force-graph ships its own three.js. Do NOT also load three.js separately:
+     two copies collide → "Multiple instances of Three.js" + "Timer is not a
+     constructor", which kills graph init. Pinned for reproducibility. -->
+<script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.73.6/dist/3d-force-graph.min.js"></script>
+<script>
+// markdown sources live in the private repo; node.path is repo-relative
+const REPO_BLOB = "https://github.com/YOURNAME/exocortex/blob/main/";
+
+const TYPE_COLOR = {
+  concept:"#89b4fa", claim:"#f38ba8", source:"#a6e3a1", project:"#fab387",
+  person:"#f9e2af", log:"#94e2d5", moc:"#cba6f7", default:"#9399b2"
+};
+const REL_COLOR = {
+  link:"#313244", supports:"#a6e3a1", contradicts:"#f38ba8",
+  derived_from:"#fab387", part_of:"#cba6f7", refines:"#89dceb", related:"#585b70"
+};
+
+fetch("../../index/graph.json").then(r=>r.json()).then(data=>{
+  document.getElementById("stats").textContent =
+    `${data.nodes.length} notes · ${data.links.length} edges`;
+
+  const Graph = ForceGraph3D()(document.getElementById("graph"))
+    .graphData(data)
+    .backgroundColor("#0b0d12")
+    .nodeLabel(n => `${n.title}  ·  ${n.type}`)
+    .nodeColor(n => TYPE_COLOR[n.type] || TYPE_COLOR.default)
+    .nodeVal(n => 1 + (data.links.filter(l =>
+        (l.source.id||l.source)===n.id || (l.target.id||l.target)===n.id).length))
+    .linkColor(l => REL_COLOR[l.rel] || REL_COLOR.link)
+    .linkOpacity(0.45)
+    .linkDirectionalParticles(l => l.rel && l.rel!=="link" ? 2 : 0)
+    .linkDirectionalParticleWidth(1.4)
+    .onNodeClick(n => {
+      const ins = data.links.filter(l => (l.target.id||l.target)===n.id);
+      const outs = data.links.filter(l => (l.source.id||l.source)===n.id);
+      const src = n.path
+        ? `<a href="${REPO_BLOB}${encodeURI(n.path)}" target="_blank" rel="noopener">${n.path} ↗</a>`
+        : "";
+      document.getElementById("sel").innerHTML =
+        `<b>${n.title}</b><br>${src}`+
+        `<br>↳ out ${outs.length} · ↰ in ${ins.length}`;
+      Graph.cameraPosition(
+        { x:n.x*1.4, y:n.y*1.4, z:n.z*1.4 }, n, 800);
+    });
+
+  document.getElementById("search").addEventListener("input", e => {
+    const q = e.target.value.toLowerCase();
+    Graph.nodeVisibility(n => !q || n.title.toLowerCase().includes(q));
+  });
+}).catch(e=>{
+  document.getElementById("stats").textContent =
+    "Could not load index/graph.json — run `exo index` first.";
+});
+</script>

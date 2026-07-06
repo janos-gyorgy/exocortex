@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Reconcile the derived index after every commit — the vault's ArgoCD selfHeal.
+# Enable once per checkout:  git config core.hooksPath .githooks
+exec "$(dirname "$0")/reconcile"

@@ -1,0 +1,25 @@
+{
+  "name": "exocortex · wanderer report",
+  "_comment": "scripts/wander-run.sh (weekly idle walk: exo collide pairs -> claude -p, sparks-only blast radius) POSTs its run summary here. Payload: {status: nothing|spark|violation|failed, day, pairs, detail, commit}. 'nothing' is a SUCCESSFUL run — the wrapper reports every walk so the agent never needs a finding to have a deliverable (see vault/30-projects/wanderer.md). This workflow is the RECEIVER, for visibility/history in n8n. Live workflow id: 9Vw3xgNaNjmtN3ZZ.",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Wanderer report",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [280, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "exocortex-wander",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Budapest",
+    "saveDataSuccessExecution": "all"
+  }
+}

@@ -1,0 +1,25 @@
+[project]
+name = "exocortex"
+version = "0.1.0"
+description = "An external cognitive layer: hybrid retrieval + graph intelligence over a plain-markdown vault"
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=6.0",
+    "sqlite-vec>=0.1.6",
+    "mcp[cli]>=1.2.0",
+]
+
+[project.optional-dependencies]
+# Local embeddings without Ollama (CPU). Heavier; install only if you want it.
+local-embed = ["sentence-transformers>=3.0"]
+
+[project.scripts]
+exo = "exo.cli:main"
+exo-mcp = "exo.mcp_server:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/exo"]
