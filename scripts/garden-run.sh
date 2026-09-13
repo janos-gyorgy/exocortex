@@ -11,54 +11,47 @@
 # Usage:
 #   garden-run.sh             full run: edits, commits, pushes
 #   garden-run.sh --dry-run   edits + reindex, then SHOW the diff and STOP (no commit/push)
+# THE SECURITY CONTRACT LIVES IN scripts/lib/corvid.sh, NOT HERE. The Gardener is
+# the widest-scoped bird in the fleet: the quarantine birds may change one file,
+# the Wanderer one file inside vault/, and this one may edit ANY note under vault/.
+# Its diet is YOURNAME's own vault rather than stranger text — that is what buys it
+# the wider scope. The chassis now asserts that subtree boundary, which this bird
+# previously had no enforcement for at all.
 set -euo pipefail
 
-# ── environment (SSH/cron hand us a minimal shell) ─────────────────────────────
-export HOME="${HOME:-/home/you}"
-export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/corvid.sh"
 
-REMOTE="git@github.com:YOURNAME/exocortex.git"
-WORK="$HOME/git/exocortex-garden"          # dedicated gardener checkout (NOT the human tree)
-BRANCH="main"
-MAX_NOTES=10                               # cap blast radius per night
-export EXO_ROOT="$WORK"                     # point exo at THIS checkout's vault/index
-export EXO_EMBED_BACKEND=none               # match web-exocortex: FTS+graph, no Ollama dep
+# ── declared containment ──────────────────────────────────────────────────────
+# NOTE 2026-09-11: this grant used to be written `--allowedTools`, a NO-OP under
+# bypassPermissions — the 2026-07-02 correction never reached this bird. Declared
+# here, the chassis emits `--tools`, so the grant is now actually enforced.
+CORVID_TOOLS=(Read Edit Write Bash Glob Grep)   # Bash: `exo search` only, per the prompt
+CORVID_GUARD_MODE=subtree
+CORVID_SCOPE_ALLOW=('^index/' '(^|/)__pycache__/[^/]*\.pyc$')
+CORVID_MAX_FILES=0             # 0 = uncapped, preserving today's behaviour exactly.
+                               # Set to e.g. 25 to make MAX_NOTES *enforced* rather
+                               # than merely requested — a deliberate tightening.
+CORVID_CLEAN_IGNORED=0         # keep gitignored index/ so the nightly run need not rebuild it
+CORVID_MAKE_QDIR=0             # writes into vault/, not quarantine/
+CORVID_DEDUP=0
+CORVID_EMIT_FINDS=0            # garden's n8n payload has never carried `finds`
+CORVID_OK_STATUS=pushed
+CORVID_NOTHING_STATUS=nochanges
+CORVID_AUTHOR=gardener
+CORVID_METER=gardener          # keep the ledger history continuous (it has always been "gardener")
 
-DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+MAX_NOTES=10                   # cap asked of the model in the prompt
 
-# ── logging + single-flight lock ──────────────────────────────────────────────
-STATE="$HOME/.local/state/exocortex-garden"
-mkdir -p "$STATE"
-DAY="$(date -u +%Y-%m-%d)"
-TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-LOG="$STATE/garden-$DAY.log"
-exec > >(tee -a "$LOG") 2>&1
-echo "==== garden run $TS  (dry_run=$DRY_RUN) ===="
-
-# end-of-run notification to n8n for visibility; no-op if unset, never fatal
-WEBHOOK="${GARDEN_N8N_WEBHOOK:-}"; STATUS="started"; DETAIL=""
-notify() {
-  [ -n "$WEBHOOK" ] || return 0
-  commit="$(git -C "$WORK" --no-pager log --oneline -1 2>/dev/null || echo n/a)"
-  curl -fsS -m 10 -X POST "$WEBHOOK" -H 'Content-Type: application/json' \
-    -d "{\"status\":\"$STATUS\",\"day\":\"$DAY\",\"cost_usd\":${RUN_COST_USD:-0},\"tok_in\":${RUN_TOKENS_IN:-0},\"tok_out\":${RUN_TOKENS_OUT:-0},\"detail\":\"${DETAIL//\"/}\",\"commit\":\"${commit//\"/}\"}" \
-    >/dev/null 2>&1 || true
+corvid_hook_commit_msg() {
+  local names; names="$(git diff --cached --name-only -- vault/ | sed 's#vault/##' | paste -sd', ' -)"
+  CORVID_DETAIL="$names"
+  echo "garden: $DAY — ${names:0:140}"
 }
-trap '[ "$STATUS" = started ] && STATUS=failed; [ "$DRY_RUN" = 1 ] || notify' EXIT
 
-exec 9>"$STATE/garden.lock"
-if ! flock -n 9; then echo "another garden run is active; exiting"; exit 0; fi
-
-# ── dedicated checkout: clone once, else hard-reset to remote HEAD ─────────────
-if [ ! -d "$WORK/.git" ]; then
-  echo "cloning gardener checkout -> $WORK"
-  git clone --branch "$BRANCH" "$REMOTE" "$WORK"
-fi
-cd "$WORK"
-git fetch --quiet origin "$BRANCH"
-git reset --hard "origin/$BRANCH"          # tree is disposable; always start clean from remote
-git clean -fdq                             # drop stray files (keeps gitignored index/)
+corvid_init garden "$@"
+corvid_sync
+CORVID_WRITE_SCOPE=("vault/")  # the only subtree this run may change
 
 # ── detect ────────────────────────────────────────────────────────────────────
 exo index >/dev/null
@@ -100,47 +93,7 @@ Rules:
   Your only job is to edit files under ./vault.
 EOF
 
-echo "---- claude apply pass ----"
-source "$WORK/scripts/lib/claude-metered.sh"
-claude_metered gardener "$(cat "$PROMPT_FILE")" \
-  --append-system-prompt "$(cat CLAUDE.md)" \
-  --permission-mode bypassPermissions \
-  --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
-  --allowedTools Read Edit Write Bash Glob Grep
-
-# ── reindex (reflect edits) ─────────────────────────────────────────────────────
-exo index >/dev/null
-
-# stage first so NEW notes (untracked, e.g. the garden log) count as changes too
-git add -A vault/
-if git diff --cached --quiet -- vault/; then
-  STATUS=nochanges; echo "claude made no vault changes; nothing to commit"; exit 0
-fi
-
-echo "---- proposed changes ----"
-git --no-pager diff --cached --stat -- vault/
-
-if [ "$DRY_RUN" = "1" ]; then
-  echo "---- DRY RUN: full diff below; NOT committing/pushing ----"
-  git --no-pager diff --cached -- vault/
-  git reset -q                            # unstage; the checkout is disposable anyway
-  echo "dry run complete. inspect above; re-run without --dry-run to commit + push."
-  exit 0
-fi
-
-# ── commit + push (deterministic, wrapper-owned) ────────────────────────────────
-NAMES="$(git diff --cached --name-only -- vault/ | sed 's#vault/##' | paste -sd', ' -)"
-git -c user.email=gardener@example.com -c user.name='exocortex gardener' \
-    commit -q -m "garden: $DAY — ${NAMES:0:140}"
-git push origin "$BRANCH" || {
-  echo "push rejected (remote moved mid-run); rebasing this run's commit and retrying once"
-  git fetch -q origin "$BRANCH"
-  if git rebase origin/"$BRANCH"; then
-    git push origin "$BRANCH"
-  else
-    git rebase --abort 2>/dev/null || true
-    STATUS=pushfail; DETAIL="push rebase conflict — left for human"; echo "$DETAIL"; exit 1
-  fi
-}
-STATUS=pushed; DETAIL="$NAMES"
-echo "pushed: $(git --no-pager log --oneline -1)"
+corvid_think "$PROMPT_FILE"
+exo index >/dev/null           # reflect the edits before the guard inspects the tree
+corvid_guard
+corvid_ship "garden: $DAY" "claude made no vault changes; nothing to commit"

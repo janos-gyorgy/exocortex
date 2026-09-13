@@ -9,11 +9,30 @@ can delete and rebuild. No lock-in, no black box, no single SaaS to trust.
 
 See `docs/ARCHITECTURE.md` for the full reasoning. Quickstart below.
 
-> **Provenance:** this is the real system I run daily, extracted as-is — my
-> private vault (a few hundred notes) is swapped for a 4-note demo vault, and
-> personal endpoints are `example.com` placeholders. Everything else — CLI,
-> MCP server, the bird agents, the gardener, hooks, eval harness — is exactly
-> the code that tends my memory every night.
+> **Provenance:** this is the real system I run daily. The private vault (a few
+> hundred notes) is swapped for a 4-note demo vault; the git remote, home path and
+> endpoints live in `scripts/lib/corvid-site.sh` and ship only as an `.example`.
+> Everything else — CLI, MCP server, the bird agents, the gardener, hooks, eval
+> harness — is the code that tends my memory every night.
+>
+> **Kept honest by construction, after it wasn't.** This mirror drifted: for two
+> months the published agents were a generation behind the ones actually running,
+> still carrying a containment bug that had been fixed privately. Since
+> 2026-09-13 everything instance-specific lives in one sourced site file, so the
+> agent scripts here are byte-identical to the ones on my node rather than a
+> hand-sanitised copy that can rot.
+
+
+### The agents run on a published containment harness
+
+Every bird here sources `scripts/lib/corvid.sh`: it declares which tools the agent
+may hold (`--tools`, not `--allowedTools`, which restricts nothing under
+`bypassPermissions`) and which paths it may change, then asserts after the run that
+nothing else moved — discarding the whole run if it did.
+
+That harness is maintained as its own project, with a test suite that proves the
+guard holds: **[corvid](https://github.com/janos-gyorgy/corvid)**. The file in this
+repo is the same file.
 
 ## The fleet — every moving part at a glance
 

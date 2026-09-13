@@ -16,55 +16,43 @@
 # Usage:
 #   wander-run.sh             full run: walk, commit spark (if any), push
 #   wander-run.sh --dry-run   walk + show diff, then STOP (no commit/push)
+# THE SECURITY CONTRACT LIVES IN scripts/lib/corvid.sh, NOT HERE. The Wanderer is
+# a VAULT-EDITOR class bird, not a quarantine one: its diet is YOURNAME's own vault
+# rather than stranger text, so it holds Edit and Bash (for `exo search`) — but it
+# may still only change ONE file, and the chassis asserts that.
 set -euo pipefail
 
-# ── environment (cron hands us a minimal shell) ────────────────────────────────
-export HOME="${HOME:-/home/you}"
-export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/corvid.sh"
 
-REMOTE="git@github.com:YOURNAME/exocortex.git"
-WORK="$HOME/git/exocortex-wander"          # dedicated wanderer checkout (NOT the human tree)
-BRANCH="main"
+# ── declared containment ──────────────────────────────────────────────────────
+# NOTE 2026-09-11: this grant used to be written `--allowedTools`, which is a
+# NO-OP under bypassPermissions — the 2026-07-02 correction never reached this
+# bird. Declaring it here means the chassis emits `--tools`, so it is now real.
+CORVID_TOOLS=(Read Edit Write Bash Glob Grep)   # Bash: `exo search` only, per the prompt
+CORVID_COUNT_KEY="pairs"
+CORVID_COUNT_VAR="PAIRS"
+CORVID_EMIT_FINDS=0            # wanderer's n8n payload has never carried `finds`
+CORVID_MAKE_QDIR=0             # writes into vault/, not quarantine/
+CORVID_DEDUP=0
+CORVID_OK_STATUS=spark
+CORVID_AUTHOR=wanderer
+CORVID_METER=wanderer          # keep the ledger history continuous (it has always been "wanderer")
+CORVID_SCOPE_ALLOW=('^index/' '(^|/)__pycache__/[^/]*\.pyc$')   # wrapper/tooling-owned ignored artifacts
+
 SPARKS="vault/00-inbox/claude-sparks.md"   # the only file the walk may touch
 PAIRS=5
-export EXO_ROOT="$WORK"
-export EXO_EMBED_BACKEND=none
 
-DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
-
-# ── logging + single-flight lock ──────────────────────────────────────────────
-STATE="$HOME/.local/state/exocortex-wander"
-mkdir -p "$STATE"
-DAY="$(date -u +%Y-%m-%d)"
-TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-LOG="$STATE/wander-$DAY.log"
-exec > >(tee -a "$LOG") 2>&1
-echo "==== wander run $TS  (dry_run=$DRY_RUN) ===="
-
-# end-of-run notification to n8n; "nothing" is a success status, not a failure
-WEBHOOK="${WANDER_N8N_WEBHOOK:-}"; STATUS="started"; DETAIL=""
-notify() {
-  [ -n "$WEBHOOK" ] || return 0
-  commit="$(git -C "$WORK" --no-pager log --oneline -1 2>/dev/null || echo n/a)"
-  curl -fsS -m 10 -X POST "$WEBHOOK" -H 'Content-Type: application/json' \
-    -d "{\"status\":\"$STATUS\",\"day\":\"$DAY\",\"pairs\":$PAIRS,\"cost_usd\":${RUN_COST_USD:-0},\"tok_in\":${RUN_TOKENS_IN:-0},\"tok_out\":${RUN_TOKENS_OUT:-0},\"detail\":\"${DETAIL//\"/}\",\"commit\":\"${commit//\"/}\"}" \
-    >/dev/null 2>&1 || true
+corvid_hook_precommit() { exo index >/dev/null; }
+corvid_hook_commit_msg() {
+  # heading format is "YYYY-MM-DD — title", so it already carries the date
+  local h; h="$(git --no-pager diff --cached -- "$SPARKS" | grep '^+## ' | head -1 | sed 's/^+## //')"
+  CORVID_DETAIL="${h:-new entry}"
+  echo "spark: ${h:-$DAY — new entry}"
 }
-trap '[ "$STATUS" = started ] && STATUS=failed; [ "$DRY_RUN" = 1 ] || notify' EXIT
 
-exec 9>"$STATE/wander.lock"
-if ! flock -n 9; then echo "another wander run is active; exiting"; exit 0; fi
-
-# ── dedicated checkout: clone once, else hard-reset to remote HEAD ─────────────
-if [ ! -d "$WORK/.git" ]; then
-  echo "cloning wanderer checkout -> $WORK"
-  git clone --branch "$BRANCH" "$REMOTE" "$WORK"
-fi
-cd "$WORK"
-git fetch --quiet origin "$BRANCH"
-git reset --hard "origin/$BRANCH"
-git clean -fdxq                              # -x: also wipe ignored cruft (.env / stale index/*) → pristine
+corvid_init wander "$@"
+corvid_sync
 
 # ── collide: pick this week's walk ─────────────────────────────────────────────
 exo index >/dev/null
@@ -117,58 +105,7 @@ The contract (this is the whole point — honor it exactly):
   exists in the vault before writing it. If it exists, it is not a spark.
 EOF
 
-echo "---- claude walk ----"
-source "$WORK/scripts/lib/claude-metered.sh"
-claude_metered wanderer "$(cat "$PROMPT_FILE")" \
-  --append-system-prompt "$(cat CLAUDE.md)" \
-  --permission-mode bypassPermissions \
-  --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
-  --allowedTools Read Edit Write Bash Glob Grep
-
-# ── enforce blast radius: ONLY $SPARKS may change — tracked, untracked OR ignored.
-# A run that wrote anything else is TAINTED: commit/push NOTHING and exit nonzero.
-# Allowlist index/ and __pycache__ — wrapper/tooling-owned ignored artifacts (the
-# wrapper runs `exo index`; the model is told not to). `git status --ignored`
-# catches .env / out-of-bounds writes that `git add` would silently skip.
-STRAY="$(git status --porcelain --untracked-files=all --ignored=matching | cut -c4- \
-         | grep -vE "^${SPARKS}$|^index/|__pycache__/" || true)"
-if [ -n "$STRAY" ]; then
-  echo "BLAST RADIUS VIOLATION — run tainted; committing/pushing NOTHING. Out-of-bounds paths:"
-  echo "$STRAY"
-  git reset -q 2>/dev/null || true; git checkout -- . 2>/dev/null || true; git clean -fdxq
-  STATUS=violation; DETAIL="stray: ${STRAY//$'\n'/, }"
-  exit 1   # trap fires notify(violation); tainted output never ships
-fi
-
-git add -- "$SPARKS" 2>/dev/null || true
-if git diff --cached --quiet; then
-  STATUS=nothing; echo "walked $PAIRS pairs; nothing connected — successful run"; exit 0
-fi
-
-echo "---- proposed spark ----"
-git --no-pager diff --cached -- "$SPARKS"
-
-if [ "$DRY_RUN" = "1" ]; then
-  echo "---- DRY RUN: NOT committing/pushing ----"
-  git reset -q
-  exit 0
-fi
-
-# ── commit + push (wrapper-owned) ───────────────────────────────────────────────
-# heading format is "YYYY-MM-DD — title", so it already carries the date
-HEADING="$(git --no-pager diff --cached -- "$SPARKS" | grep '^+## ' | head -1 | sed 's/^+## //')"
-exo index >/dev/null
-git -c user.email=wanderer@example.com -c user.name='exocortex wanderer' \
-    commit -q -m "spark: ${HEADING:-$DAY — new entry}"
-git push origin "$BRANCH" || {
-  echo "push rejected (remote moved mid-run); rebasing this run's commit and retrying once"
-  git fetch -q origin "$BRANCH"
-  if git rebase origin/"$BRANCH"; then
-    git push origin "$BRANCH"
-  else
-    git rebase --abort 2>/dev/null || true
-    STATUS=pushfail; DETAIL="push rebase conflict — left for human"; echo "$DETAIL"; exit 1
-  fi
-}
-STATUS=spark; DETAIL="${HEADING:-new entry}"
-echo "pushed: $(git --no-pager log --oneline -1)"
+corvid_think "$PROMPT_FILE"
+CORVID_WRITE_SCOPE=("$SPARKS")   # the ONLY path this run may change
+corvid_guard
+corvid_ship "spark: $DAY" "walked $PAIRS pairs; nothing connected — successful run"

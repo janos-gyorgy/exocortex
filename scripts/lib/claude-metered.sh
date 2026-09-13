@@ -8,11 +8,24 @@
 # stdout (so agent logs look unchanged), and exports for the caller's report:
 #   RUN_COST_USD  RUN_TOKENS_IN  RUN_TOKENS_OUT  RUN_TURNS
 #
+# No model is pinned: agents follow whatever the CLI default resolves to
+# (settings.json `model`, currently the `opus` alias -> claude-opus-5). Set
+# EXO_CLAUDE_MODEL to force a specific model for one run or one bird.
+#
+# History: a premium model was pinned until 2026-07-27, when the fleet hit the monthly spend
+# limit and every agent stopped mid-run (double
+# rate for weekly foragers whose job is "read some feeds and usually find
+# nothing"). Then pinned to an older model on the mistaken belief that no newer
+# one existed; that held the fleet a generation back for weeks. Lesson: a hard
+# pin needs re-checking every model release, and nobody was re-checking — so the
+# pin is gone and the default carries the fleet forward on its own.
+#
 # Best-effort by contract: a metering/parse failure NEVER fails the agent run —
 # on bad JSON it falls back to printing raw output and leaves the vars empty.
 # The ledger lives OUTSIDE the vault (operational telemetry, never indexed).
 
-: "${EXO_USAGE_DIR:=$HOME/.local/state/exocortex-usage}"
+# Resolves to <project>-usage, so an existing ledger keeps its path.
+: "${EXO_USAGE_DIR:=$HOME/.local/state/${CORVID_PROJECT:-corvid}-usage}"
 : "${EXO_USAGE_LEDGER:=$EXO_USAGE_DIR/ledger.jsonl}"
 
 claude_metered() {
@@ -27,7 +40,8 @@ claude_metered() {
   # execute. It MUST sit before any list-consuming flag (e.g. --allowedTools),
   # so inject it right after the prompt. Keep stderr SEPARATE — merging it
   # corrupts the JSON capture.
-  claude -p "$prompt" --output-format json "$@" >"$out" 2>"$err" || rc=$?
+  claude -p "$prompt" --output-format json \
+    ${EXO_CLAUDE_MODEL:+--model "$EXO_CLAUDE_MODEL"} "$@" >"$out" 2>"$err" || rc=$?
   cat "$err" >&2   # surface claude's own stderr into the agent log
 
   if AGENT="$agent" LEDGER="$EXO_USAGE_LEDGER" METRICS="$metrics" \

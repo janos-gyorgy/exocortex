@@ -53,9 +53,13 @@ def keys_in(path):
 
 
 def main():
-    if len(sys.argv) != 4:
-        sys.exit("usage: desk-dedup.py <qdir> <qfile> <dismissed-md>")
-    qdir, qfile, dismissed = sys.argv[1], sys.argv[2], sys.argv[3]
+    if len(sys.argv) not in (3, 4):
+        sys.exit("usage: desk-dedup.py <qdir> <qfile> [dismissed-md]")
+    qdir, qfile = sys.argv[1], sys.argv[2]
+    # The chassis calls this with two args (it cannot know your muted-list path),
+    # so default to the conventional sibling of the quarantine dir.
+    dismissed = sys.argv[3] if len(sys.argv) == 4 else os.path.join(
+        os.path.dirname(qdir.rstrip("/")) or ".", "desk-dismissed.md")
 
     seen = set()
     if os.path.isdir(qdir):
