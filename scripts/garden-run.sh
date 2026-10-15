@@ -27,6 +27,7 @@ source "$SCRIPT_DIR/lib/corvid.sh"
 # bypassPermissions — the 2026-07-02 correction never reached this bird. Declared
 # here, the chassis emits `--tools`, so the grant is now actually enforced.
 CORVID_TOOLS=(Read Edit Write Bash Glob Grep)   # Bash: `exo search` only, per the prompt
+CORVID_TIER=standard                  # model tier -> scripts/lib/models.sh (aliases, never IDs)
 CORVID_GUARD_MODE=subtree
 CORVID_SCOPE_ALLOW=('^index/' '(^|/)__pycache__/[^/]*\.pyc$')
 CORVID_MAX_FILES=0             # 0 = uncapped, preserving today's behaviour exactly.
@@ -51,7 +52,7 @@ corvid_hook_commit_msg() {
 
 corvid_init garden "$@"
 corvid_sync
-CORVID_WRITE_SCOPE=("vault/")  # the only subtree this run may change
+CORVID_WRITE_SCOPE=("vault/" "logs/garden/")  # the only subtrees this run may change (pass logs live outside vault/, 2026-10-06)
 
 # ── detect ────────────────────────────────────────────────────────────────────
 exo index >/dev/null
@@ -86,7 +87,7 @@ Rules:
     * add or refresh a one-line frontmatter \`summary:\` where missing or stale,
     * set \`agent: claude-gardener\` on any note you edit.
 - Do NOT delete notes, do NOT rewrite human prose, do NOT mass-edit. When unsure, SKIP.
-- Finally, write a log note at ./vault/00-inbox/garden-$DAY.md with frontmatter
+- Finally, write a pass log at ./logs/garden/garden-$DAY.md (OUTSIDE vault/ — never indexed) with frontmatter
   (id: garden-$DAY, type: log, agent: claude-gardener, summary: <one line>) whose
   body lists exactly what you changed and what you deliberately skipped, and why.
 - Do NOT run git or 'exo index' — the wrapper handles indexing, committing, pushing.

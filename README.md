@@ -12,7 +12,7 @@ See `docs/ARCHITECTURE.md` for the full reasoning. Quickstart below.
 > **Provenance:** this is the real system I run daily. The private vault (a few
 > hundred notes) is swapped for a 4-note demo vault; the git remote, home path and
 > endpoints live in `scripts/lib/corvid-site.sh` and ship only as an `.example`.
-> Everything else — CLI, MCP server, the bird agents, the gardener, hooks, eval
+> Everything else — CLI, MCP server, the gardener and wanderer agents, hooks, eval
 > harness — is the code that tends my memory every night.
 >
 > **Kept honest by construction, after it wasn't.** This mirror drifted: for two
@@ -25,7 +25,7 @@ See `docs/ARCHITECTURE.md` for the full reasoning. Quickstart below.
 
 ### The agents run on a published containment harness
 
-Every bird here sources `scripts/lib/corvid.sh`: it declares which tools the agent
+Every agent here sources `scripts/lib/corvid.sh`: it declares which tools the agent
 may hold (`--tools`, not `--allowedTools`, which restricts nothing under
 `bypassPermissions`) and which paths it may change, then asserts after the run that
 nothing else moved — discarding the whole run if it did.
@@ -48,26 +48,20 @@ here is magic; each one is a script or a hook you can read.
 | **Reconciler** | index Synced/OutOfSync + auto-reindex | on commit/merge | `.githooks/`, `exo status` |
 | **Gardener** | nightly vault upkeep (orphans, links, summaries) → `garden:` commits | cron **daily 03:00** | `scripts/garden-run.sh` |
 | **Wanderer** | task-less serendipity walk — collides *trusted* vault notes | cron **Sun 07:00** | `scripts/wander-run.sh` |
-| **Magpie** | GitHub-stars watch — collides *untrusted* external text | cron **Sat 06:00** | `scripts/magpie-run.sh` |
-| **Bluejay** | serendipity news-reader — allowlisted RSS, **summaries only** (never article bodies), hunts the distant connection | cron **weekly** | `scripts/bluejay-run.sh` |
-| **Jackdaw** | people-radar — contributors of starred repos sorted into 4 typed lanes; **drafts only, sending is always a human act** | cron **monthly** | `scripts/jackdaw-run.sh` |
 | **WIP sweep** | snapshot dirty human tree → `wip/<host>` (never lose work) | cron **every 20 min** | `~/.local/bin/exo-wip-sweep.sh` |
 | **Recall hook** | search the vault on the first prompt of a CC session | UserPromptSubmit | `~/.claude/hooks/exo-recall.sh` |
 | **Session-start hook** | fetch/warn/pull this tree, nag about `wip/*` | SessionStart (in this repo) | `~/.claude/hooks/exo-session-start.sh` |
 | **n8n receivers** | one-line run report per agent | webhook on each run | `automation/`, `n8n.example.com` |
 
 **The one rule that ties it together — trust boundaries by destination:**
-gardener and wanderer read already-trusted notes and write to `vault/` and push to
-`main`. The three corvids — Magpie, Bluejay, Jackdaw — ingest attacker-influenceable
-text (stranger-written repo descriptions, RSS summaries, contributor profiles), so
-they write **only** to `quarantine/` (never indexed, never auto-linked) and you
-promote finds by hand. Their collide/classify phase holds the untrusted text in
-context with **no Bash, no git, no network, no MCP** — read the vault, write one
-quarantine file, nothing else — and the wrapper discards any change outside that
-path. "Nothing sparked" is a successful run; the birds never manufacture a find to
-look productive. The WIP sweep writes unfinished human
+gardener and wanderer read only already-trusted notes, so they may write to `vault/`
+and push to `main`. Agents that read outside text (repo descriptions, feeds) are a
+different class: they write only to a quarantine folder that is never indexed, and
+you promote finds by hand. That pattern lives in
+[corvid](https://github.com/janos-gyorgy/corvid), not here. "Nothing sparked" is a
+successful run; the agents never manufacture a find to look productive. The WIP sweep writes unfinished human
 work to `wip/<host>` branches — recoverable, but it reaches `main` only by your
-hand. Robot checkouts (`exocortex-{garden,wander,magpie}`) hard-reset every run, so
+hand. Robot checkouts (`exocortex-{garden,wander}`) hard-reset every run, so
 they self-heal and never strand work.
 
 ## What you get

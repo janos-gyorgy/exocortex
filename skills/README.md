@@ -12,10 +12,5 @@ edit is a normal git diff in this repo.
 
 ## claude-config/
 
-The global operating layer, same symlink pattern:
-- `CLAUDE.md` — the working contract (`~/.claude/CLAUDE.md` symlinks here)
-- `hooks/` — exo-recall/session hooks (`~/.claude/hooks` symlinks here)
-- `settings.snapshot.json` — a tracked **copy** of `~/.claude/settings.json`,
-  NOT a symlink: Claude Code rewrites that file itself and a rewrite would
-  silently replace a symlink. Refresh the snapshot after changing settings.
-- Never version `~/.claude.json` or `.credentials.json` — secrets.
+`hooks/` — the exo-recall / session hooks (`~/.claude/hooks` symlinks here): search
+the vault on the first prompt of a Claude Code session and inject the hits.

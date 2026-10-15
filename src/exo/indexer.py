@@ -5,11 +5,18 @@ Outputs:
   index/graph.json     {nodes:[...], links:[...]} for the 3D viewer & exports
 
 Idempotent: re-running rebuilds cleanly. The DB is disposable.
+
+Atomic: the new index is built in exocortex.db.tmp and renamed over the live one
+only once it is complete, so a failed build leaves the last good index in place
+and a concurrent `exo search` never sees half-built tables. A lock serialises
+builds (the post-commit hook and a manual `exo index` used to overlap).
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -22,8 +29,8 @@ def file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
 
-def _connect() -> sqlite3.Connection:
-    con = sqlite3.connect(CONFIG.index_db)
+def _connect(path: Path) -> sqlite3.Connection:
+    con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
     return con
 
@@ -77,8 +84,26 @@ def _iter_notes() -> list[Note]:
 
 
 def build() -> dict:
+    lock_path = CONFIG.index_db.parent / ".build.lock"
+    with open(lock_path, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # one build at a time; the next waits
+        tmp_db = CONFIG.index_db.with_name(CONFIG.index_db.name + ".tmp")
+        tmp_graph = CONFIG.graph_json.with_name(CONFIG.graph_json.name + ".tmp")
+        for leftover in (tmp_db, Path(str(tmp_db) + "-journal"), tmp_graph):
+            leftover.unlink(missing_ok=True)  # a crashed build's debris
+        try:
+            result = _build_into(tmp_db, tmp_graph)
+            os.replace(tmp_db, CONFIG.index_db)
+            os.replace(tmp_graph, CONFIG.graph_json)
+        finally:
+            tmp_db.unlink(missing_ok=True)
+            tmp_graph.unlink(missing_ok=True)
+    return result
+
+
+def _build_into(db_path: Path, graph_path: Path) -> dict:
     embedder = Embedder()
-    con = _connect()
+    con = _connect(db_path)
     vec_ok = embedder.enabled and _try_load_vec(con)
     _schema(con, vec_ok, embedder.dim)
 
@@ -144,7 +169,7 @@ def build() -> dict:
         {"source": s, "target": d, "rel": r}
         for (s, d, r) in edges if s in valid and d in valid
     ]
-    CONFIG.graph_json.write_text(json.dumps({"nodes": nodes, "links": links}, indent=2))
+    graph_path.write_text(json.dumps({"nodes": nodes, "links": links}, indent=2))
 
     con.close()
     return {

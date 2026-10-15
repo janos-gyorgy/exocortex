@@ -30,6 +30,7 @@ source "$SCRIPT_DIR/lib/corvid.sh"
 # NO-OP under bypassPermissions — the 2026-07-02 correction never reached this
 # bird. Declaring it here means the chassis emits `--tools`, so it is now real.
 CORVID_TOOLS=(Read Edit Write Bash Glob Grep)   # Bash: `exo search` only, per the prompt
+CORVID_TIER=standard                  # model tier -> scripts/lib/models.sh (aliases, never IDs)
 CORVID_COUNT_KEY="pairs"
 CORVID_COUNT_VAR="PAIRS"
 CORVID_EMIT_FINDS=0            # wanderer's n8n payload has never carried `finds`

@@ -148,6 +148,7 @@ corvid_on_exit() {
     corvid_hook_on_exit
   else
     [ "$DRY_RUN" = 1 ] || corvid_notify
+    [ "$DRY_RUN" = 1 ] || corvid_ntfy_notify
   fi
   return 0
 }
@@ -164,7 +165,7 @@ corvid_notify() {
   # double quotes is not escaping — backslashes, newlines and control characters
   # all still break or inject. (Adversarial review, 2026-09-13.)
   python3 - "$STATUS" "$DAY" "$DETAIL" "$commit" \
-           "${CORVID_COUNT_KEY:-}" "${!CORVID_COUNT_VAR:-0}" \
+           "${CORVID_COUNT_KEY:-}" "${CORVID_COUNT_VAR:+${!CORVID_COUNT_VAR:-0}}" \
            "${CORVID_EMIT_FINDS:-1}" "${FINDS:-0}" \
            "${RUN_COST_USD:-0}" "${RUN_TOKENS_IN:-0}" "${RUN_TOKENS_OUT:-0}" \
     > "$STATE/notify.json" <<'PY' || return 0
@@ -187,6 +188,63 @@ json.dump(p, sys.stdout)
 PY
   curl -fsS -m 10 -X POST "$WEBHOOK" -H 'Content-Type: application/json' \
     --data-binary "@$STATE/notify.json" >/dev/null 2>&1 || true
+}
+
+# ── corvid_ntfy_notify ────────────────────────────────────────────────────────
+# Push the run outcome to an ntfy topic (CORVID_NTFY_URL, the full topic URL
+# from corvid-site.sh) alongside the n8n webhook. Title "<bird>: <status>"; the
+# body carries the run detail, the finds count, the cost in USD and the last
+# commit line. Priority: a status OUTSIDE the OK set (a failed run) is high with
+# a warning tag; a run that changed nothing is low; anything with finds is the
+# default. ntfy reads Title, Priority and Tags from HTTP headers, not the body,
+# so they go out as curl headers and the body is plain text (the same shape
+# _claude_metered_mismatch already uses; a JSON body would only be parsed when
+# posted to the server root with a "topic" field, which we do not do). Optional
+# CORVID_NTFY_TOKEN is sent as a Bearer token and is never echoed. Best-effort
+# and non-blocking exactly like the n8n post above: 10s timeout, errors ignored,
+# so a notification can never fail or slow the run.
+corvid_ntfy_notify() {
+  [ -n "${CORVID_NTFY_URL:-}" ] || return 0
+  local st="${STATUS:-failed}" commit prio="default" tags=""
+  # The OK set mirrors rookery's OK_STATUS -- anything outside it is a failure.
+  case "$st" in
+    ok|finds|spark|pushed|nothing|nochanges|clean|changed) : ;;
+    *) prio="high"; tags="warning" ;;
+  esac
+  case "$st" in nothing|nochanges) prio="low" ;; esac
+  commit="$(git -C "$WORK" --no-pager log --oneline -1 2>/dev/null || echo n/a)"
+  # DETAIL can hold model-chosen text, so the body is built by a JSON encoder
+  # into a plain-text file rather than pasting strings into the request, while
+  # headers keep newlines stripped (same discipline as corvid_notify).
+  python3 - "$BIRD" "$st" "$DETAIL" "${FINDS:-0}" "${RUN_COST_USD:-0}" \
+           "$commit" > "$STATE/ntfy.json" <<'PY' || return 0
+import sys
+bird, st, detail, finds, cost, commit = sys.argv[1:7]
+def num(v):
+    v = str(v).strip()
+    try:
+        return float(v) if "." in v else int(v)
+    except ValueError:
+        return 0
+bits = [detail] if detail else []
+bits.append("finds: {0}".format(num(finds)))
+bits.append("cost: ${0}".format(num(cost)))
+if commit and commit != "n/a":
+    bits.append(commit)
+sys.stdout.write("\n".join(bits))
+PY
+  # Header values must never contain a newline: curl would pass it through and
+  # let a title, priority or tag split into a second header line.
+  local ntfy_title ntfy_tags auth=()
+  ntfy_title="$(printf '%s' "$BIRD: $st" | tr -d '\r\n')"
+  ntfy_tags="$(printf '%s' "$tags" | tr -d '\r\n')"
+  if [ -n "${CORVID_NTFY_TOKEN:-}" ]; then
+    auth=(-H "Authorization: Bearer $CORVID_NTFY_TOKEN")
+  fi
+  curl -fsS -m 10 -X POST "$CORVID_NTFY_URL" \
+    -H "Title: $ntfy_title" -H "Priority: $prio" \
+    -H "Tags: $ntfy_tags" "${auth[@]}" \
+    --data-binary "@$STATE/ntfy.json" >/dev/null 2>&1 || true
 }
 
 # ── corvid_sync ───────────────────────────────────────────────────────────────
@@ -276,9 +334,30 @@ _corvid_git_seal() {
     # hooks/info/config execute or alter behaviour; refs/HEAD/packed-refs decide
     # WHAT gets committed and pushed; modules/ carries submodule hooks.
     find .git/hooks .git/info .git/refs .git/modules -type f -printf '%m %p\n' \
-         -exec sha256sum {} \; 2>/dev/null
-    sha256sum .git/config .git/HEAD .git/packed-refs 2>/dev/null
+         -exec sha256sum {} \; 2>/dev/null || true
+    # `|| true`: a missing path (no .git/modules, no packed-refs in a fresh repo)
+    # must not fail the seal under `set -euo pipefail` — it silently killed the run.
+    sha256sum .git/config .git/HEAD .git/packed-refs 2>/dev/null || true
   } | LC_ALL=C sort | sha256sum | cut -d' ' -f1
+}
+
+# ── _corvid_guard_one <path> ─────────────────────────────────────────────────
+# Classify ONE changed path for corvid_guard. Updates the caller's `inscope` and
+# `stray` (bash dynamic scope), so a directory expansion and a plain path go
+# through exactly the same test.
+_corvid_guard_one() {
+  local path="$1" ok
+  # A symlink among the CHANGED paths can redirect a write out of the tree even
+  # when the path itself looks in scope — checking only declared paths missed this.
+  if [ -L "${path%/}" ]; then stray+=("$path (symlink)"); return 0; fi
+  # NOT `cmd; ok=$?` — under `set -e` a return of 2 (allowlisted) or 1 kills the
+  # run before the guard can report. That silently failed the gardener 2026-09-14.
+  ok=0; _corvid_in_scope "$path" || ok=$?
+  case "$ok" in
+    0) inscope=$((inscope+1)) ;;
+    2) : ;;
+    *) stray+=("$path") ;;
+  esac
 }
 
 # ── corvid_guard ──────────────────────────────────────────────────────────────
@@ -332,15 +411,19 @@ corvid_guard() {
       fi
       continue
     fi
-    # A symlink among the CHANGED paths can redirect a write out of the tree even
-    # when the path itself looks in scope — checking only declared paths missed this.
-    if [ -L "$path" ]; then stray+=("$path (symlink)"); continue; fi
-    _corvid_in_scope "$path"; ok=$?
-    case "$ok" in
-      0) inscope=$((inscope+1)) ;;
-      2) : ;;
-      *) stray+=("$path") ;;
-    esac
+    # `--ignored=matching` collapses a wholly-ignored directory to "dir/". Judge
+    # every file inside it, not the directory name: otherwise an allowlist written
+    # for files (`__pycache__/*.pyc`) refuses the directory, and a directory-level
+    # allowlist would wave through anything hidden in it. (Gardener, 2026-09-14.)
+    if [[ "$path" == */ ]] && [ -d "${path%/}" ] && [ ! -L "${path%/}" ]; then
+      local f n=0
+      while IFS= read -r -d '' f; do
+        n=$((n+1)); _corvid_guard_one "$f"
+      done < <(find "${path%/}" -mindepth 1 ! -type d -print0)
+      [ "$n" -gt 0 ] || _corvid_guard_one "$path"   # empty dir: judge the name
+      continue
+    fi
+    _corvid_guard_one "$path"
   done < <(git status --porcelain --untracked-files=all --ignored=matching | cut -c4-)
 
   if [ "${#stray[@]}" -gt 0 ]; then
